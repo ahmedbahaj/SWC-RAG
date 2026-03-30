@@ -1,3 +1,4 @@
 .env
 
 rag/
+chroma_db/
