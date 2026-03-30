@@ -25,7 +25,7 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 CHROMA_DIR = Path(__file__).resolve().parent / "chroma_db"
 COLLECTION_NAME = "pptx_rag"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-DEFAULT_HAIKU = "claude-3-5-haiku-20241022"
+DEFAULT_HAIKU = "claude-haiku-4-5"
 
 
 def load_pptx_documents(data_dir: Path) -> list[Document]:
