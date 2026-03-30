@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SWC-RAG — Ask the slides</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --border: #2d3a4d;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #5b9fd4;
+      --accent-hover: #7ab8e8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+    .wrap {
+      max-width: 42rem;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 3rem;
+    }
+    h1 {
+      font-size: 1.35rem;
+      font-weight: 600;
+      margin: 0 0 0.35rem;
+    }
+    .sub {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-bottom: 1.5rem;
+    }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-bottom: 0.4rem;
+    }
+    textarea {
+      width: 100%;
+      min-height: 5rem;
+      padding: 0.75rem 0.9rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+      resize: vertical;
+    }
+    textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    button {
+      margin-top: 0.75rem;
+      padding: 0.55rem 1.1rem;
+      border: none;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #0a0e14;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .out {
+      margin-top: 1.75rem;
+    }
+    .out h2 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin: 0 0 0.5rem;
+    }
+    .answer {
+      white-space: pre-wrap;
+      word-break: break-word;
+      padding: 1rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      font-size: 0.95rem;
+    }
+    .err {
+      color: #f08080;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Ask your presentations</h1>
+    <p class="sub">Answers use only text retrieved from your <code>data/</code> PowerPoint files.</p>
+    <label for="q">Question</label>
+    <textarea id="q" placeholder="e.g. What is a code comment?"></textarea>
+    <button type="button" id="go">Ask</button>
+    <div class="out" id="out" hidden>
+      <h2>Answer</h2>
+      <div class="answer" id="a"></div>
+    </div>
+  </div>
+  <script>
+    const q = document.getElementById("q");
+    const go = document.getElementById("go");
+    const out = document.getElementById("out");
+    const a = document.getElementById("a");
+
+    async function ask() {
+      const question = q.value.trim();
+      if (!question) return;
+      go.disabled = true;
+      out.hidden = false;
+      a.textContent = "…";
+      a.classList.remove("err");
+      try {
+        const res = await fetch("/api/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          a.textContent = data.error || res.statusText || "Request failed";
+          a.classList.add("err");
+          return;
+        }
+        a.textContent = data.answer ?? "";
+      } catch (e) {
+        a.textContent = String(e.message || e);
+        a.classList.add("err");
+      } finally {
+        go.disabled = false;
+      }
+    }
+    go.addEventListener("click", ask);
+    q.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) ask();
+    });
+  </script>
+</body>
+</html>

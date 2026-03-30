@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
@@ -20,6 +21,9 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pptx import Presentation
 
+if TYPE_CHECKING:
+    from langchain_core.runnables import Runnable
+
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 CHROMA_DIR = Path(__file__).resolve().parent / "chroma_db"
@@ -29,7 +33,11 @@ DEFAULT_HAIKU = "claude-haiku-4-5"
 
 
 def load_pptx_documents(data_dir: Path) -> list[Document]:
-    paths = sorted(data_dir.glob("**/*.pptx"))
+    paths = [
+        p
+        for p in sorted(data_dir.glob("**/*.pptx"))
+        if not p.name.startswith("~$")
+    ]
     if not paths:
         return []
     documents: list[Document] = []
@@ -79,7 +87,7 @@ def build_or_load_vectorstore(
 
     raw_docs = load_pptx_documents(data_dir)
     if not raw_docs:
-        raise SystemExit(
+        raise RuntimeError(
             f"No text extracted from PowerPoint files. Add .pptx files under {data_dir} "
             "and ensure slides contain extractable text."
         )
@@ -139,12 +147,53 @@ def build_rag_chain(retriever, llm: ChatAnthropic):
     )
 
 
-def main() -> None:
+def init_rag_chain(*, reindex: bool) -> "Runnable":
     load_dotenv()
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        raise SystemExit("Set ANTHROPIC_API_KEY in your environment or .env file.")
+        raise RuntimeError("Set ANTHROPIC_API_KEY in your environment or .env file.")
 
+    model_name = os.environ.get("ANTHROPIC_MODEL", DEFAULT_HAIKU)
+    llm = ChatAnthropic(
+        model=model_name,
+        api_key=api_key,
+        temperature=0,
+    )
+
+    vectorstore = build_or_load_vectorstore(
+        reindex=reindex,
+        data_dir=DATA_DIR,
+        persist_dir=CHROMA_DIR,
+    )
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
+    return build_rag_chain(retriever, llm)
+
+
+def create_flask_app(chain: "Runnable"):
+    from flask import Flask, jsonify, render_template, request
+
+    app = Flask(__name__)
+
+    @app.get("/")
+    def index():
+        return render_template("index.html")
+
+    @app.post("/api/ask")
+    def ask():
+        body = request.get_json(silent=True) or {}
+        question = (body.get("question") or "").strip()
+        if not question:
+            return jsonify({"error": "Missing or empty 'question' in JSON body."}), 400
+        try:
+            answer = chain.invoke({"question": question})
+            return jsonify({"answer": answer})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    return app
+
+
+def main() -> None:
     parser = argparse.ArgumentParser(description="RAG over PowerPoint files in ./data")
     parser.add_argument(
         "--reindex",
@@ -158,22 +207,35 @@ def main() -> None:
         default=None,
         help="Ask a single question and exit (otherwise interactive REPL).",
     )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="Run a small web UI (HTML) and JSON API instead of the terminal REPL.",
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Bind address for --serve (default: 127.0.0.1).",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=5000,
+        help="Port for --serve (default: 5000).",
+    )
     args = parser.parse_args()
 
-    model_name = os.environ.get("ANTHROPIC_MODEL", DEFAULT_HAIKU)
-    llm = ChatAnthropic(
-        model=model_name,
-        api_key=api_key,
-        temperature=0,
-    )
+    try:
+        chain = init_rag_chain(reindex=args.reindex)
+    except RuntimeError as e:
+        raise SystemExit(str(e)) from e
 
-    vectorstore = build_or_load_vectorstore(
-        reindex=args.reindex,
-        data_dir=DATA_DIR,
-        persist_dir=CHROMA_DIR,
-    )
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
-    chain = build_rag_chain(retriever, llm)
+    if args.serve:
+        app = create_flask_app(chain)
+        print(f"Open http://{args.host}:{args.port}/ in your browser (Ctrl+C to stop).")
+        app.run(host=args.host, port=args.port, debug=False)
+        return
 
     if args.question:
         out = chain.invoke({"question": args.question})
